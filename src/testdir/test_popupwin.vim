@@ -1328,7 +1328,7 @@ func Test_popup_getpos()
   call popup_settext(winid, ["hello world", "hello world (10)", "hello world"])
   call win_execute(winid, "setl nu")
   let pos = popup_getpos(winid)
-  call assert_equal(pos.scrollbar, 1)
+  call assert_equal(1, pos.scrollbar)
 
   call popup_clear(winid)
 endfunc
