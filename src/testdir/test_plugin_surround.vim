@@ -354,8 +354,10 @@ func Test_surround_custom_pairs()
   call setline(1, lines)
 
   let b:surround_pairs = {
-        \ 'q': ("\n‘", "’"), 'Q': ("\n“", "”"),
-        \ 'w': ("\n‹", "›"), 'W': ("\n«", "»")
+        \ 'q': {"pair": ("‘", "’"), "newline": -1},
+        \ 'Q': {"pair": ("“", "”"), "newline": -1},
+        \ 'w': {"pair": ("‹", "›"), "newline": -1},
+        \ 'W': {"pair": ("«", "»"), "newline": -1}
         \}
 
   normal ysiwq
@@ -371,5 +373,36 @@ func Test_surround_custom_pairs()
         \ "«‘one’ «보two» 여보«‹세요 дважды›» два “четыре”",
         \ "three세 four 여{‘보세’}요 это всем 'известно'",
         \ "five 요 ‘six’ “여보세요” ‘여보세요’ в _целом_ мире»",
+        \] , result)
+endfunc
+
+func Test_surround_function()
+  let lines =<< trim END
+    "hello world", 12
+    print("hello world", 12)
+    "hello world", 12
+    print( "hello world", 12 )
+    print("hello world", 12)
+    print( "hello world", 12 )
+  END
+
+  enew
+  call setline(1, lines)
+
+  exe "normal yssfprint\<CR>"
+  exe "normal jdsf"
+  exe "normal jyssFprint\<CR>"
+  exe "normal jdsF"
+  exe "normal jdsF"
+  exe "normal jdsf"
+
+  let result = getline(1, '$')
+  call assert_equal([
+        \ 'print("hello world", 12)',
+        \ '"hello world", 12',
+        \ 'print( "hello world", 12 )',
+        \ '"hello world", 12',
+        \ 'print("hello world", 12)',
+        \ ' "hello world", 12 '
         \] , result)
 endfunc
