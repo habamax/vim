@@ -1,7 +1,7 @@
 vim9script
 
 # Maintainer: Maxim Kim <habamax@gmail.com>
-# Last Update: 2026-07-01
+# Last Update: 2026-07-08
 
 # Surround/Remove surround with.
 var s_with: dict<any> = {}
@@ -9,8 +9,6 @@ var s_with: dict<any> = {}
 var c_with: dict<any> = {}
 # If block selection is done with $
 var visual_dollar: bool = false
-# Filetypes with indent script to fix indent after surround
-var filetypes = []
 
 # To prevent asking for surround char in every repetition of a dot command, e.g.
 # ysiw( followed by . should surround with ( as well, not ask for a char again.
@@ -58,7 +56,6 @@ enddef
 def Pair(char: string, adding: bool = true): dict<any>
     var pairs = Pairs()
     var pair = get(pairs, char, ())
-    mess clear
     if typename(pair) == 'tuple<string, string>'
         return {
             left: adding ? pair[0] : trim(pair[0]),
@@ -143,28 +140,27 @@ export def Change(): string
 enddef
 
 def ShouldIndent(): bool
-    if empty(filetypes)
-        filetypes = globpath(&rtp, 'indent/*.vim', 0, 1)
-            ->mapnew((_, v) => fnamemodify(v, ':t:r'))
-    endif
-    return filetypes->index(&filetype) != -1
+    return !empty(&indentexpr) || &cindent
 enddef
 
-def AddSurround(mode: string, pos_start: list<number> = getcharpos("'["), pos_end: list<number> = getcharpos("']"))
+def AddSurround(mode: string, pos_start: list<number> = getcharpos("'["), pos_end: list<number> = getcharpos("']")): bool
     var save_lazyredraw = &lazyredraw
     var save_virtualedit = &l:virtualedit
     var save_indentkeys = &l:indentkeys
+    var save_cinkeys = &l:cinkeys
     var save_autoindent = &l:autoindent
     var save_comments = &l:comments
     set lazyredraw
     setlocal virtualedit=block
     setlocal indentkeys=
+    setlocal cinkeys=
     setlocal autoindent
     setlocal comments=
     defer () => {
         &lazyredraw = save_lazyredraw
         &l:virtualedit = save_virtualedit
         &l:indentkeys = save_indentkeys
+        &l:cinkeys = save_cinkeys
         &l:autoindent = save_autoindent
         &l:comments = save_comments
     }()
@@ -174,13 +170,13 @@ def AddSurround(mode: string, pos_start: list<number> = getcharpos("'["), pos_en
         var char = getcharstr(-1, {cursor: 'keep'})
         if char == "\<Esc>" || char == "\<CR>"
             winrestview(cancel_view)
-            return
+            return false
         endif
         s_with = {trigger: char, pair: Pair(char)}
     endif
 
     if empty(s_with.pair)
-        return
+        return false
     endif
 
     var start = pos_start
@@ -250,7 +246,7 @@ def AddSurround(mode: string, pos_start: list<number> = getcharpos("'["), pos_en
         exe $":noautocmd :{end[1]}normal! jo{s_right}"
         if (s_left =~ '[([{]' || s_right =~ '</.\{-}>')
             && ShouldIndent()
-            exe $":{start[1]}"
+            exe $":{start[1] + 1}"
             exe $":silent noautocmd normal! {end[1] - start[1] + 2}=="
         endif
         exe $":{start[1] + 1}"
@@ -307,6 +303,7 @@ def AddSurround(mode: string, pos_start: list<number> = getcharpos("'["), pos_en
             exe "noautocmd normal! \<ESC>"
         endif
     endif
+    return true
 enddef
 
 def RemoveSurround(delete_empty_lines: bool = true): list<list<number>>
@@ -376,7 +373,7 @@ def RemoveSurround(delete_empty_lines: bool = true): list<list<number>>
     endif
 
     setcharpos('.', pos.start)
-    var indent_lines = pos.end[0] - pos.start[0]
+    var indent_lines = pos.end[1] - pos.start[1]
 
     if pos.start[1] == cursor[1] && pos.end[1] == cursor[1]
         pos.end[2] -= pos.startlen
@@ -403,8 +400,8 @@ def RemoveSurround(delete_empty_lines: bool = true): list<list<number>>
     if delete_empty_lines && indent_lines >= 1
             && (pair.left =~ '[([{]' || s_with.trigger == 't')
             && ShouldIndent()
-        exe $":{pos.start[0] - 1}"
-        exe $":silent noautocmd normal! {pos.end[1] - pos.start[1] + 2}=="
+        exe $":{pos.start[1]}"
+        exe $":silent noautocmd normal! {pos.end[1] - pos.start[1] + 1}=="
     endif
     winrestview(view)
     setcharpos('.', pos.start)
@@ -440,7 +437,9 @@ def ChangeSurround()
             }()
         endif
         s_with = c_with->deepcopy()
-        AddSurround('char', start, end)
+        if !AddSurround('char', start, end)
+            silent undo
+        endif
         s_with = with->deepcopy()
     endif
 enddef
