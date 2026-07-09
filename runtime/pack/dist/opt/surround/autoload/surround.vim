@@ -1,7 +1,7 @@
 vim9script
 
 # Maintainer: Maxim Kim <habamax@gmail.com>
-# Last Update: 2026-07-08
+# Last Update: 2026-07-09
 
 # Surround/Remove surround with.
 var s_with: dict<any> = {}
@@ -36,9 +36,9 @@ var base_pairs = {
     '*': {pair: ('*', '*'), newline: -1},
     '_': {pair: ('_', '_'), newline: -1},
     '/': {pair: ('/', '/'), newline: -1},
-    't': {input: "Tag: ", tag: true, pair: ("<__INPUT__>", "</__INPUT[0]__>"), newline: 1},
-    'f': {input: "Function: ", rxleft: '\<\k\+(', pair: ("__INPUT__(", ")")},
-    'F': {input: "Function: ", rxleft: '\<\k\+( ', pair: ("__INPUT__( ", " )")},
+    't': {input: "Tag: ", probe: "tag", pair: ("<__INPUT__>", "</__INPUT[0]__>"), newline: 1},
+    'f': {input: "Function: ", probe: "func", pair: ("__INPUT__(", ")")},
+    'F': {input: "Function: ", probe: "func", pair: ("__INPUT__( ", " )")},
 }
 
 extend(base_pairs, get(g:, "surround_pairs", {}))
@@ -79,14 +79,14 @@ def Pair(char: string, adding: bool = true): dict<any>
                 res.right = substitute(res.right, '__INPUT\[\(\d\+\)\]__', '\=split(in)[submatch(1)->str2nr()]', 'g')
             endif
         else
-            res.tag = get(pair, "tag", false)
+            res.probe = get(pair, "probe", "pair")
             res.left = substitute(res.left, '__INPUT\(\[\d\+\]\)\?__', '', 'g')
             res.right = substitute(res.right, '__INPUT\(\[\d\+\]\)\?__', '', 'g')
             if !adding && get(pair, "trim", 0) == 1
                 res.left = res.left->trim()
                 res.right = res.right->trim()
             endif
-            res.rxleft = get(pair, "rxleft", res.left)
+            # res.rxleft = get(pair, "rxleft", res.left)
         endif
         return res
     endif
@@ -143,7 +143,7 @@ def ShouldIndent(): bool
     return !empty(&indentexpr) || &cindent
 enddef
 
-def AddSurround(mode: string, pos_start: list<number> = getcharpos("'["), pos_end: list<number> = getcharpos("']")): bool
+def AddSurround(mode: string, pos_start: list<number> = getcharpos("'["), pos_end: list<number> = getcharpos("']"), change: bool = false): bool
     var save_lazyredraw = &lazyredraw
     var save_virtualedit = &l:virtualedit
     var save_indentkeys = &l:indentkeys
@@ -238,7 +238,7 @@ def AddSurround(mode: string, pos_start: list<number> = getcharpos("'["), pos_en
         if empty(getline(end[1]))
             setline(end[1], s_right)
         else
-            exe $"noautocmd normal! a{s_tab}{s_right}"
+            exe $"noautocmd normal! {change && end[2] == 0 ? "i" : "a"}{s_tab}{s_right}"
         endif
         setcharpos('.', start)
     elseif s_mode == 'line'
@@ -307,13 +307,16 @@ def AddSurround(mode: string, pos_start: list<number> = getcharpos("'["), pos_en
 enddef
 
 def RemoveSurround(delete_empty_lines: bool = true): list<list<number>>
+    var save_lazyredraw = &lazyredraw
     var save_clipboard = &clipboard
     var save_virtualedit = &l:virtualedit
     set clipboard=
     setlocal virtualedit=none
+    set lazyredraw
     defer () => {
         &clipboard = save_clipboard
         &l:virtualedit = save_virtualedit
+        &lazyredraw = save_lazyredraw
     }()
 
     if !dotrepeat
@@ -360,8 +363,10 @@ def RemoveSurround(delete_empty_lines: bool = true): list<list<number>>
         pair = closest.pair
     else
         pair = Pair(s_with.trigger, false)
-        if get(pair, 'tag', false)
+        if get(pair, 'probe', "pair") == "tag"
             [pos, pair] = ProbeTag()
+        elseif get(pair, 'probe', "pair") == "func"
+            [pos, pair] = ProbeFunc()
         else
             pos = ProbePair(pair)
         endif
@@ -378,8 +383,7 @@ def RemoveSurround(delete_empty_lines: bool = true): list<list<number>>
     if pos.start[1] == cursor[1] && pos.end[1] == cursor[1]
         pos.end[2] -= pos.startlen
     endif
-    var rxleft = get(pair, 'rxleft', escape(pair.left, '\'))
-    if delete_empty_lines && getline('.') =~ $'\V\^\s\*{rxleft}\$'
+    if delete_empty_lines && getline('.') =~ $'\V\^\s\*{escape(pair.left, '\')}\$'
         noautocmd normal! "_dd
         pos.end[1] -= 1
     else
@@ -392,10 +396,12 @@ def RemoveSurround(delete_empty_lines: bool = true): list<list<number>>
     else
         var move_left = charcol('.') < charcol('$') - pos.endlen
         exe $'noautocmd normal! {pos.endlen}"_x'
-        if move_left
+        if move_left && charcol('.') > 1
             noautocmd normal! h
+            pos.end[2] = charcol('.')
+        elseif move_left
+            pos.end[2] -= 1
         endif
-        pos.end[2] = charcol('.')
     endif
     if delete_empty_lines && indent_lines >= 1
             && (pair.left =~ '[([{]' || s_with.trigger == 't')
@@ -437,7 +443,7 @@ def ChangeSurround()
             }()
         endif
         s_with = c_with->deepcopy()
-        if !AddSurround('char', start, end)
+        if !AddSurround('char', start, end, true)
             silent undo
         endif
         s_with = with->deepcopy()
@@ -457,54 +463,49 @@ def ProbePair(pair: dict<any>): dict<any>
         setreg("", unnamed)
         winrestview(view)
     }()
-    var rxleft = get(pair, "rxleft", pair.left)
-    var startlen = strchars(pair.left)
+    var start = []
+    var end = []
+    var cur = getcursorcharpos()
 
     if trim(pair.left) != trim(pair.right)
         noautocmd normal! yl
         var char = getreg("")
         var flags = 'bW'
-        if stridx(pair.right, char) != -1
-            if search('\V' .. escape(pair.right, '\'), 'cbW', line('.')) == 0
-                flags ..= 'c'
-            endif
-        else
+        if stridx(pair.left, char) != -1
             flags ..= 'c'
         endif
-        if searchpair($'\V{rxleft}', '', '\V' .. escape(pair.right, '\'), flags, () => SkipEscaped()) <= 0
-            return {}
-        endif
-        var start = getcursorcharpos()
-        if search(rxleft, 'ce', line('.')) != -1
-            startlen = (getcursorcharpos()[2] - start[2]) + 1
+        if searchpair($'\V{escape(pair.left, '\')}', '', $'\V{escape(pair.right, '\')}', flags, () => SkipEscaped()) > 0
+            start = getcursorcharpos()
+            if searchpair($'\V{escape(pair.left, '\')}', '', $'\V{escape(pair.right, '\')}', 'W', () => SkipEscaped()) > 0
+                end = getcursorcharpos()
+            endif
         endif
 
-        if searchpair($'\V{rxleft}', '', '\V' .. escape(pair.right, '\'), 'W', () => SkipEscaped()) <= 0
+        if empty(start) && empty(end)
             return {}
         endif
-        var end = getcursorcharpos()
         return {
             start: start,
-            startlen: startlen,
+            startlen: strchars(pair.left),
             end: end,
             endlen: strchars(pair.right)
         }
     else
-        if search($'\V{rxleft}', 'bW', line('.'), 200, () => SkipEscaped()) <= 0
-            if search($'\V{rxleft}', 'cbW', line('.'), 200, () => SkipEscaped()) <= 0
+        if search($'\V{escape(pair.left, '\')}', 'bW', line('.'), 200, () => SkipEscaped()) <= 0
+            if search($'\V{escape(pair.left, '\')}', 'cbW', line('.'), 200, () => SkipEscaped()) <= 0
                 return {}
             endif
         endif
-        var start = getcursorcharpos()
+        start = getcursorcharpos()
         if search('\V' .. escape(pair.right, '\'), 'W', line('.'), 200, () => SkipEscaped()) <= 0
             return {}
         endif
-        var end = getcursorcharpos()
+        end = getcursorcharpos()
 
-        if start != [0, 0] && end != [0, 0] && start != end
+        if start != end
             return {
                 start: start,
-                startlen: startlen,
+                startlen: strchars(pair.left),
                 end: end,
                 endlen: strchars(pair.right)
             }
@@ -512,6 +513,49 @@ def ProbePair(pair: dict<any>): dict<any>
             return {}
         endif
     endif
+enddef
+
+def ProbeFunc(): list<dict<any>>
+    var view = winsaveview()
+    var unnamed = getreg("")
+    defer () => {
+        winrestview(view)
+        setreg("", unnamed)
+    }()
+
+    # timer_start(3000, (FAILS HERE) => {
+    #     popup_close(winid)
+    # })
+
+    var funcregion = []
+    try
+        if expand("<cWORD>") =~ '\k\+('
+            search('[[:space:]]\|^', 'b', line('.'))
+            search('(\|)', '', line('.'))
+        endif
+
+        noautocmd normal! yab
+        var start = getcharpos("'[")
+        var end = getcharpos("']")
+
+        var line = getline(end[1])[ : end[2] - 1]
+        var s_right = ')'
+        line = getline(start[1])[: start[2] - 1]
+        var s_left = matchstr(line, '\k\+($')
+
+        if !empty(s_right) && !empty(s_left)
+            end[2] -= (strchars(s_right) - 1)
+            start[2] -= (strchars(s_left) - 1)
+            return [{
+                start: start,
+                startlen: strchars(s_left),
+                end: end,
+                endlen: strchars(s_right)
+            }, {left: s_left, right: s_right}]
+        endif
+    catch
+    endtry
+    return [{}, {}]
 enddef
 
 def ProbeTag(): list<dict<any>>
@@ -543,8 +587,6 @@ def ProbeTag(): list<dict<any>>
             }, {left: s_left, right: s_right}]
         endif
     catch
-    finally
-        exe "noautocmd normal! \<esc>"
     endtry
     return [{}, {}]
 enddef
