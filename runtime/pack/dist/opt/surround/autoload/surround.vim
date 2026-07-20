@@ -545,11 +545,8 @@ def ProbeFunc(pair: dict<any>): dict<any>
         endif
     endif
 
-<<<<<<< HEAD
-=======
     var cursor = getpos('.')
 
->>>>>>> d1878753f (update surround)
     exe $"noautocmd normal! ya{left}"
     var count = 1
     while !empty(getreg(""))
@@ -573,11 +570,7 @@ def ProbeFunc(pair: dict<any>): dict<any>
         endif
         count += 1
         setreg("", "")
-<<<<<<< HEAD
-        setcharpos('.', cursor)
-=======
         setpos('.', cursor)
->>>>>>> d1878753f (update surround)
         exe $"noautocmd normal! {count}ya{left}"
     endwhile
     return {}
@@ -596,7 +589,7 @@ def ProbeTag(): dict<any>
     var end = getpos("']")
 
     var line = getline(end[1])->strpart(0, end[2])
-    var s_right = matchstr(line, '</\S\{-}>$')
+    var s_right = matchstr(line, '</[^<]\{-}>$')
     line = getline(start[1])->strpart(start[2] - 1)
     var s_left = matchstr(line, '^<[^[:punct:][:space:]].\{-}>')
 
