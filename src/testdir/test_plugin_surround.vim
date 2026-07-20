@@ -368,8 +368,8 @@ func Test_surround_change2()
 
   let result = getline(1, '$')
   call assert_equal([
-        \ 'Lorem ipsum [',
-        \ 'fermentum pretium ].'
+        \ 'Lorem ipsum [  ',
+        \ 'fermentum pretium  ].'
         \] , result)
 endfunc
 
